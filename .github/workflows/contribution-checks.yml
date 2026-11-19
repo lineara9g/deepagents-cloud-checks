@@ -1,0 +1,74 @@
+name: Deep Agents contribution checks
+run-name: Check requested Deep Agents revision
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/contribution-checks.yml
+      - contribution-check.json
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.repository == 'lineara9g/deepagents-cloud-checks'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: control
+          sparse-checkout: contribution-check.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Read validation request
+        id: request
+        run: |
+          set -euo pipefail
+          file=control/contribution-check.json
+          commit=$(jq -er '.commit | strings | select(test("^[0-9a-f]{40}$"))' "$file")
+          package=$(jq -er '.package | strings' "$file")
+          suite=$(jq -er '.suite | strings' "$file")
+          case "$package" in
+            code|evals|talon) python=3.14 ;;
+            deepagents|acp|partners/quickjs|partners/daytona|partners/modal|partners/runloop|partners/vercel) python=3.12 ;;
+            *) echo "Unsupported package"; exit 1 ;;
+          esac
+          case "$suite" in
+            package) ;;
+            eval-smoke) test "$package" = evals ;;
+            *) echo "Unsupported suite"; exit 1 ;;
+          esac
+          printf 'commit=%s\npackage=%s\nsuite=%s\npython=%s\n' "$commit" "$package" "$suite" "$python" >> "$GITHUB_OUTPUT"
+          printf 'Testing %s, package %s, suite %s\n' "$commit" "$package" "$suite"
+
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: lineara9g/deepagents
+          ref: ${{ steps.request.outputs.commit }}
+          path: source
+          persist-credentials: false
+
+      - uses: ./source/.github/actions/uv_setup
+        with:
+          python-version: ${{ steps.request.outputs.python }}
+          enable-cache: 'false'
+
+      - name: Run repository tests
+        working-directory: source/libs/${{ steps.request.outputs.package }}
+        env:
+          SUITE: ${{ steps.request.outputs.suite }}
+          SOURCE_SHA: ${{ steps.request.outputs.commit }}
+          UV_LOCKED: '1'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          if [ "$SUITE" = eval-smoke ]; then
+            make test TEST_FILE="tests/unit_tests/test_run_trials.py tests/unit_tests/test_pytest_reporter.py"
+          else
+            make test
+            make lint
+          fi
