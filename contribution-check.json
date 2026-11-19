@@ -1,5 +1,6 @@
 {
   "commit": "a502bd69d0677c1ac4d6481622e840977decbf80",
   "package": "evals",
-  "suite": "eval-smoke"
+  "suite": "eval-smoke",
+  "request": "scheduled-cloud-preflight"
 }
